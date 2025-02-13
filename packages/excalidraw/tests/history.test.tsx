@@ -7,6 +7,7 @@ import {
   assertSelectedElements,
   render,
   togglePopover,
+  getCloneByOrigId,
 } from "./test-utils";
 import { Excalidraw } from "../index";
 import { Keyboard, Pointer, UI } from "./helpers/ui";
@@ -15,7 +16,7 @@ import { getDefaultAppState } from "../appState";
 import { fireEvent, queryByTestId, waitFor } from "@testing-library/react";
 import { createUndoAction, createRedoAction } from "../actions/actionHistory";
 import { actionToggleViewMode } from "../actions/actionToggleViewMode";
-import { EXPORT_DATA_TYPES, MIME_TYPES } from "../constants";
+import { EXPORT_DATA_TYPES, MIME_TYPES, ORIG_ID } from "../constants";
 import type { AppState } from "../types";
 import { arrayToMap } from "../utils";
 import {
@@ -1138,8 +1139,8 @@ describe("history", () => {
       expect(h.elements).toEqual([
         expect.objectContaining({ id: rect1.id, isDeleted: false }),
         expect.objectContaining({ id: rect2.id, isDeleted: false }),
-        expect.objectContaining({ id: `${rect1.id}_copy`, isDeleted: true }),
-        expect.objectContaining({ id: `${rect2.id}_copy`, isDeleted: true }),
+        expect.objectContaining({ [ORIG_ID]: rect1.id, isDeleted: true }),
+        expect.objectContaining({ [ORIG_ID]: rect2.id, isDeleted: true }),
       ]);
       expect(h.state.editingGroupId).toBeNull();
       expect(h.state.selectedGroupIds).toEqual({ A: true });
@@ -1151,8 +1152,8 @@ describe("history", () => {
       expect(h.elements).toEqual([
         expect.objectContaining({ id: rect1.id, isDeleted: false }),
         expect.objectContaining({ id: rect2.id, isDeleted: false }),
-        expect.objectContaining({ id: `${rect1.id}_copy`, isDeleted: false }),
-        expect.objectContaining({ id: `${rect2.id}_copy`, isDeleted: false }),
+        expect.objectContaining({ [ORIG_ID]: rect1.id, isDeleted: false }),
+        expect.objectContaining({ [ORIG_ID]: rect2.id, isDeleted: false }),
       ]);
       expect(h.state.editingGroupId).toBeNull();
       expect(h.state.selectedGroupIds).not.toEqual(
@@ -1171,14 +1172,14 @@ describe("history", () => {
         expect.arrayContaining([
           expect.objectContaining({ id: rect1.id, isDeleted: false }),
           expect.objectContaining({ id: rect2.id, isDeleted: false }),
-          expect.objectContaining({ id: `${rect1.id}_copy`, isDeleted: true }),
-          expect.objectContaining({ id: `${rect2.id}_copy`, isDeleted: true }),
+          expect.objectContaining({ [ORIG_ID]: rect1.id, isDeleted: true }),
+          expect.objectContaining({ [ORIG_ID]: rect2.id, isDeleted: true }),
           expect.objectContaining({
-            id: `${rect1.id}_copy_copy`,
+            [ORIG_ID]: getCloneByOrigId(rect1.id)?.id,
             isDeleted: false,
           }),
           expect.objectContaining({
-            id: `${rect2.id}_copy_copy`,
+            [ORIG_ID]: getCloneByOrigId(rect2.id)?.id,
             isDeleted: false,
           }),
         ]),
@@ -2077,16 +2078,15 @@ describe("history", () => {
         storeAction: StoreAction.UPDATE,
       });
 
-      Keyboard.redo();
+      Keyboard.undo();
 
       const modifiedArrow = h.elements.filter(
         (el) => el.type === "arrow",
       )[0] as ExcalidrawElbowArrowElement;
-      expect(modifiedArrow.points).toEqual([
+      expect(modifiedArrow.points).toCloselyEqualPoints([
         [0, 0],
-        [225.95000000000005, 0],
-        [225.95000000000005, 448.10100010002003],
-        [451.9000000000001, 448.10100010002003],
+        [178.9, 0],
+        [178.9, 236.1],
       ]);
     });
 

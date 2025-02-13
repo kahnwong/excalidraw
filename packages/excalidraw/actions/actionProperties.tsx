@@ -89,6 +89,7 @@ import type {
   FontFamilyValues,
   TextAlign,
   VerticalAlign,
+  NonDeletedSceneElementsMap,
 } from "../element/types";
 import { getLanguage, t } from "../i18n";
 import { KEYS } from "../keys";
@@ -115,10 +116,12 @@ import {
   bindPointToSnapToElementOutline,
   calculateFixedPointForElbowArrowBinding,
   getHoveredElementForBinding,
+  updateBoundElements,
 } from "../element/binding";
 import { LinearElementEditor } from "../element/linearElementEditor";
 import type { LocalPoint } from "../../math";
 import { pointFrom } from "../../math";
+import { Range } from "../components/Range";
 
 const FONT_SIZE_RELATIVE_INCREASE_STEP = 0.1;
 
@@ -218,33 +221,47 @@ const changeFontSize = (
 ) => {
   const newFontSizes = new Set<number>();
 
+  const updatedElements = changeProperty(
+    elements,
+    appState,
+    (oldElement) => {
+      if (isTextElement(oldElement)) {
+        const newFontSize = getNewFontSize(oldElement);
+        newFontSizes.add(newFontSize);
+
+        let newElement: ExcalidrawTextElement = newElementWith(oldElement, {
+          fontSize: newFontSize,
+        });
+        redrawTextBoundingBox(
+          newElement,
+          app.scene.getContainerElement(oldElement),
+          app.scene.getNonDeletedElementsMap(),
+        );
+
+        newElement = offsetElementAfterFontResize(oldElement, newElement);
+
+        return newElement;
+      }
+      return oldElement;
+    },
+    true,
+  );
+
+  // Update arrow elements after text elements have been updated
+  const updatedElementsMap = arrayToMap(updatedElements);
+  getSelectedElements(elements, appState, {
+    includeBoundTextElement: true,
+  }).forEach((element) => {
+    if (isTextElement(element)) {
+      updateBoundElements(
+        element,
+        updatedElementsMap as NonDeletedSceneElementsMap,
+      );
+    }
+  });
+
   return {
-    elements: changeProperty(
-      elements,
-      appState,
-      (oldElement) => {
-        if (isTextElement(oldElement)) {
-          const newFontSize = getNewFontSize(oldElement);
-          newFontSizes.add(newFontSize);
-
-          let newElement: ExcalidrawTextElement = newElementWith(oldElement, {
-            fontSize: newFontSize,
-          });
-          redrawTextBoundingBox(
-            newElement,
-            app.scene.getContainerElement(oldElement),
-            app.scene.getNonDeletedElementsMap(),
-          );
-
-          newElement = offsetElementAfterFontResize(oldElement, newElement);
-
-          return newElement;
-        }
-
-        return oldElement;
-      },
-      true,
-    ),
+    elements: updatedElements,
     appState: {
       ...appState,
       // update state only if we've set all select text elements to
@@ -614,25 +631,12 @@ export const actionChangeOpacity = register({
     };
   },
   PanelComponent: ({ elements, appState, updateData }) => (
-    <label className="control-label">
-      {t("labels.opacity")}
-      <input
-        type="range"
-        min="0"
-        max="100"
-        step="10"
-        onChange={(event) => updateData(+event.target.value)}
-        value={
-          getFormValue(
-            elements,
-            appState,
-            (element) => element.opacity,
-            true,
-            appState.currentItemOpacity,
-          ) ?? undefined
-        }
-      />
-    </label>
+    <Range
+      updateData={updateData}
+      elements={elements}
+      appState={appState}
+      testId="opacity"
+    />
   ),
 });
 
@@ -1601,6 +1605,8 @@ export const actionChangeArrowType = register({
             elements,
             elementsMap,
             appState.zoom,
+            false,
+            true,
           );
         const endHoveredElement =
           !newElement.endBinding &&
@@ -1609,6 +1615,8 @@ export const actionChangeArrowType = register({
             elements,
             elementsMap,
             appState.zoom,
+            false,
+            true,
           );
         const startElement = startHoveredElement
           ? startHoveredElement

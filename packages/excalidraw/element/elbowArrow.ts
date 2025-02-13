@@ -1,4 +1,5 @@
 import {
+  clamp,
   pointDistance,
   pointFrom,
   pointScaleFromOrigin,
@@ -20,11 +21,11 @@ import {
   bindPointToSnapToElementOutline,
   distanceToBindableElement,
   avoidRectangularCorner,
-  getHoveredElementForBinding,
   FIXED_BINDING_DISTANCE,
   getHeadingForElbowArrowSnap,
   getGlobalFixedPointForBindableElement,
   snapToMid,
+  getHoveredElementForBinding,
 } from "./binding";
 import type { Bounds } from "./bounds";
 import type { Heading } from "./heading";
@@ -104,7 +105,7 @@ const handleSegmentRenormalization = (
   elementsMap: NonDeletedSceneElementsMap | SceneElementsMap,
 ) => {
   const nextFixedSegments: FixedSegment[] | null = arrow.fixedSegments
-    ? structuredClone(arrow.fixedSegments)
+    ? arrow.fixedSegments.slice()
     : null;
 
   if (nextFixedSegments) {
@@ -244,6 +245,12 @@ const handleSegmentRenormalization = (
       );
     }
 
+    import.meta.env.DEV &&
+      invariant(
+        validateElbowPoints(nextPoints),
+        "Invalid elbow points with fixed segments",
+      );
+
     return normalizeArrowElementUpdate(
       nextPoints,
       filteredNextFixedSegments,
@@ -264,7 +271,7 @@ const handleSegmentRenormalization = (
 
 const handleSegmentRelease = (
   arrow: ExcalidrawElbowArrowElement,
-  fixedSegments: FixedSegment[],
+  fixedSegments: readonly FixedSegment[],
   elementsMap: NonDeletedSceneElementsMap | SceneElementsMap,
 ) => {
   const newFixedSegmentIndices = fixedSegments.map((segment) => segment.index);
@@ -438,7 +445,7 @@ const handleSegmentRelease = (
  */
 const handleSegmentMove = (
   arrow: ExcalidrawElbowArrowElement,
-  fixedSegments: FixedSegment[],
+  fixedSegments: readonly FixedSegment[],
   startHeading: Heading,
   endHeading: Heading,
   hoveredStartElement: ExcalidrawBindableElement | null,
@@ -680,7 +687,7 @@ const handleSegmentMove = (
 const handleEndpointDrag = (
   arrow: ExcalidrawElbowArrowElement,
   updatedPoints: readonly LocalPoint[],
-  fixedSegments: FixedSegment[],
+  fixedSegments: readonly FixedSegment[],
   startHeading: Heading,
   endHeading: Heading,
   startGlobalPoint: GlobalPoint,
@@ -857,6 +864,8 @@ const handleEndpointDrag = (
   );
 };
 
+const MAX_POS = 1e6;
+
 /**
  *
  */
@@ -866,6 +875,8 @@ export const updateElbowArrowPoints = (
   updates: {
     points?: readonly LocalPoint[];
     fixedSegments?: FixedSegment[] | null;
+    startBinding?: FixedPointBinding | null;
+    endBinding?: FixedPointBinding | null;
   },
   options?: {
     isDragging?: boolean;
@@ -873,6 +884,50 @@ export const updateElbowArrowPoints = (
 ): ElementUpdate<ExcalidrawElbowArrowElement> => {
   if (arrow.points.length < 2) {
     return { points: updates.points ?? arrow.points };
+  }
+
+  // NOTE (mtolmacs): This is a temporary check to ensure that the incoming elbow
+  // arrow size is valid. This check will be removed once the issue is identified
+  if (
+    arrow.x < -MAX_POS ||
+    arrow.x > MAX_POS ||
+    arrow.y < -MAX_POS ||
+    arrow.y > MAX_POS ||
+    arrow.x + (updates?.points?.[updates?.points?.length - 1]?.[0] ?? 0) <
+      -MAX_POS ||
+    arrow.x + (updates?.points?.[updates?.points?.length - 1]?.[0] ?? 0) >
+      MAX_POS ||
+    arrow.y + (updates?.points?.[updates?.points?.length - 1]?.[1] ?? 0) <
+      -MAX_POS ||
+    arrow.y + (updates?.points?.[updates?.points?.length - 1]?.[1] ?? 0) >
+      MAX_POS ||
+    arrow.x + (arrow?.points?.[arrow?.points?.length - 1]?.[0] ?? 0) <
+      -MAX_POS ||
+    arrow.x + (arrow?.points?.[arrow?.points?.length - 1]?.[0] ?? 0) >
+      MAX_POS ||
+    arrow.y + (arrow?.points?.[arrow?.points?.length - 1]?.[1] ?? 0) <
+      -MAX_POS ||
+    arrow.y + (arrow?.points?.[arrow?.points?.length - 1]?.[1] ?? 0) > MAX_POS
+  ) {
+    console.error(
+      "Elbow arrow (or update) is outside reasonable bounds (> 1e6)",
+      {
+        arrow,
+        updates,
+      },
+    );
+  }
+  // @ts-ignore See above note
+  arrow.x = clamp(arrow.x, -MAX_POS, MAX_POS);
+  // @ts-ignore See above note
+  arrow.y = clamp(arrow.y, -MAX_POS, MAX_POS);
+  if (updates.points) {
+    updates.points = updates.points.map(([x, y]) =>
+      pointFrom<LocalPoint>(
+        clamp(x, -MAX_POS, MAX_POS),
+        clamp(y, -MAX_POS, MAX_POS),
+      ),
+    );
   }
 
   if (!import.meta.env.PROD) {
@@ -909,6 +964,24 @@ export const updateElbowArrowPoints = (
     );
   }
 
+  // 0. During all element replacement in the scene, we just need to renormalize
+  // the arrow
+  // TODO (dwelle,mtolmacs): Remove this once Scene.getScene() is removed
+  if (
+    elementsMap.size === 0 &&
+    updates.points &&
+    validateElbowPoints(updates.points)
+  ) {
+    return normalizeArrowElementUpdate(
+      updates.points.map((p) =>
+        pointFrom<GlobalPoint>(arrow.x + p[0], arrow.y + p[1]),
+      ),
+      arrow.fixedSegments,
+      arrow.startIsSpecial,
+      arrow.endIsSpecial,
+    );
+  }
+
   const updatedPoints: readonly LocalPoint[] = updates.points
     ? updates.points && updates.points.length === 2
       ? arrow.points.map((p, idx) =>
@@ -918,8 +991,8 @@ export const updateElbowArrowPoints = (
             ? updates.points![1]
             : p,
         )
-      : structuredClone(updates.points)
-    : structuredClone(arrow.points);
+      : updates.points.slice()
+    : arrow.points.slice();
 
   const {
     startHeading,
@@ -929,15 +1002,46 @@ export const updateElbowArrowPoints = (
     hoveredStartElement,
     hoveredEndElement,
     ...rest
-  } = getElbowArrowData(arrow, elementsMap, updatedPoints, options);
+  } = getElbowArrowData(
+    {
+      x: arrow.x,
+      y: arrow.y,
+      startBinding:
+        typeof updates.startBinding !== "undefined"
+          ? updates.startBinding
+          : arrow.startBinding,
+      endBinding:
+        typeof updates.endBinding !== "undefined"
+          ? updates.endBinding
+          : arrow.endBinding,
+      startArrowhead: arrow.startArrowhead,
+      endArrowhead: arrow.endArrowhead,
+    },
+    elementsMap,
+    updatedPoints,
+    options,
+  );
 
   const fixedSegments = updates.fixedSegments ?? arrow.fixedSegments ?? [];
 
   ////
   // 1. Renormalize the arrow
   ////
-  if (!updates.points && !updates.fixedSegments) {
+  if (
+    !updates.points &&
+    !updates.fixedSegments &&
+    !updates.startBinding &&
+    !updates.endBinding
+  ) {
     return handleSegmentRenormalization(arrow, elementsMap);
+  }
+
+  // Short circuit on no-op to avoid huge performance hit
+  if (
+    updates.startBinding === arrow.startBinding &&
+    updates.endBinding === arrow.endBinding
+  ) {
+    return {};
   }
 
   ////
@@ -986,6 +1090,7 @@ export const updateElbowArrowPoints = (
 
   ////
   // 5. Handle resize
+  ////
   if (updates.points && updates.fixedSegments) {
     return updates;
   }
@@ -1907,7 +2012,7 @@ const getBindableElementForId = (
 
 const normalizeArrowElementUpdate = (
   global: GlobalPoint[],
-  nextFixedSegments: FixedSegment[] | null,
+  nextFixedSegments: readonly FixedSegment[] | null,
   startIsSpecial?: ExcalidrawElbowArrowElement["startIsSpecial"],
   endIsSpecial?: ExcalidrawElbowArrowElement["startIsSpecial"],
 ): {
@@ -1916,24 +2021,51 @@ const normalizeArrowElementUpdate = (
   y: number;
   width: number;
   height: number;
-  fixedSegments: FixedSegment[] | null;
+  fixedSegments: readonly FixedSegment[] | null;
   startIsSpecial?: ExcalidrawElbowArrowElement["startIsSpecial"];
   endIsSpecial?: ExcalidrawElbowArrowElement["startIsSpecial"];
 } => {
   const offsetX = global[0][0];
   const offsetY = global[0][1];
 
-  const points = global.map((p) =>
+  let points = global.map((p) =>
     pointTranslate<GlobalPoint, LocalPoint>(
       p,
       vectorScale(vectorFromPoint(global[0]), -1),
     ),
   );
 
+  // NOTE (mtolmacs): This is a temporary check to see if the normalization
+  // creates an overly large arrow. This should be removed once we have an answer.
+  if (
+    offsetX < -MAX_POS ||
+    offsetX > MAX_POS ||
+    offsetY < -MAX_POS ||
+    offsetY > MAX_POS ||
+    offsetX + points[points.length - 1][0] < -MAX_POS ||
+    offsetY + points[points.length - 1][0] > MAX_POS ||
+    offsetX + points[points.length - 1][1] < -MAX_POS ||
+    offsetY + points[points.length - 1][1] > MAX_POS
+  ) {
+    console.error(
+      "Elbow arrow normalization is outside reasonable bounds (> 1e6)",
+      {
+        x: offsetX,
+        y: offsetY,
+        points,
+        ...getSizeFromPoints(points),
+      },
+    );
+  }
+
+  points = points.map(([x, y]) =>
+    pointFrom<LocalPoint>(clamp(x, -1e6, 1e6), clamp(y, -1e6, 1e6)),
+  );
+
   return {
     points,
-    x: offsetX,
-    y: offsetY,
+    x: clamp(offsetX, -1e6, 1e6),
+    y: clamp(offsetY, -1e6, 1e6),
     fixedSegments:
       (nextFixedSegments?.length ?? 0) > 0 ? nextFixedSegments : null,
     ...getSizeFromPoints(points),
@@ -2096,6 +2228,7 @@ const getHoveredElements = (
       nonDeletedSceneElementsMap,
       zoom,
       true,
+      true,
     ),
     getHoveredElementForBinding(
       tupleToCoors(origEndGlobalPoint),
@@ -2103,9 +2236,23 @@ const getHoveredElements = (
       nonDeletedSceneElementsMap,
       zoom,
       true,
+      true,
     ),
   ];
 };
 
 const gridAddressesEqual = (a: GridAddress, b: GridAddress): boolean =>
   a[0] === b[0] && a[1] === b[1];
+
+const validateElbowPoints = <P extends GlobalPoint | LocalPoint>(
+  points: readonly P[],
+  tolerance: number = DEDUP_TRESHOLD,
+) =>
+  points
+    .slice(1)
+    .map(
+      (p, i) =>
+        Math.abs(p[0] - points[i][0]) < tolerance ||
+        Math.abs(p[1] - points[i][1]) < tolerance,
+    )
+    .every(Boolean);
