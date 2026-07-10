@@ -10,6 +10,7 @@ import {
   applyDarkModeFilter,
   DEFAULT_IMAGE_OPTIONS,
   DEFAULT_UI_OPTIONS,
+  getStrokeWidthByKey,
   isShallowEqual,
 } from "@excalidraw/common";
 
@@ -67,8 +68,10 @@ const ExcalidrawBase = (props: ExcalidrawProps) => {
   const {
     onExport,
     onChange,
+    onThemeChange,
     onIncrement,
     initialData,
+    initialState,
     onExcalidrawAPI,
     onMount,
     onUnmount,
@@ -129,7 +132,7 @@ const ExcalidrawBase = (props: ExcalidrawProps) => {
 
   if (
     UIOptions.canvasActions.toggleTheme === null &&
-    typeof theme === "undefined"
+    (theme == null || onThemeChange)
   ) {
     UIOptions.canvasActions.toggleTheme = true;
   }
@@ -185,8 +188,10 @@ const ExcalidrawBase = (props: ExcalidrawProps) => {
         <App
           onExport={onExport}
           onChange={onChange}
+          onThemeChange={onThemeChange}
           onIncrement={onIncrement}
           initialData={initialData}
+          initialState={initialState}
           onExcalidrawAPI={handleExcalidrawAPI}
           onMount={onMount}
           onUnmount={onUnmount}
@@ -391,7 +396,8 @@ export type {
   SavedChats,
 } from "./components/TTDDialog/types";
 
-export { zoomToFitBounds } from "./actions/actionCanvas";
+export { zoomToFitBounds, DEFAULT_OVERSCROLL } from "./viewport";
+
 export {
   getCommonBounds,
   getVisibleSceneBounds,
@@ -448,4 +454,4 @@ export function useExcalidrawStateValue(
 
 export { _useOnAppStateChange as useOnExcalidrawStateChange };
 
-export { applyDarkModeFilter };
+export { applyDarkModeFilter, getStrokeWidthByKey };
